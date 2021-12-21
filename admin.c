@@ -27,9 +27,31 @@ typedef struct buffer_data buffer;
 struct iospec {
 int fd;
 SSL *ssl;
-int sb;
+enum exmode {tls, notls, sandbox, backdoor} mode;
+
 char sbname [nameholder];
 }; // iospec
+
+struct args_data {
+char base_path [string_sz];
+int tls;
+    
+}; // request_data
+
+// bm structs
+
+struct request_data {
+char method;
+struct iospec *io;
+
+char uri [string_sz];
+char path [string_sz];
+char fullpath [string_sz];
+char resourcename [nameholder];
+char ext [20];
+
+
+}; // request_data
 
 const struct timespec msdelay = {0, 1000000};
 struct timespec tsdump;
@@ -41,19 +63,95 @@ SSL_CTX *create_context();
 int sock_setnonblock (const int fd);
 void configure_context(SSL_CTX *ctx);
 int tls_nbaccept (SSL *ssl);
-int tls_reciever (struct iospec io, char *in, const int max);
-int tls_sender (struct iospec io, char *in, const int max, int complete);
+
+int tls_reciever (const struct iospec io, char *in, const int max);
+int tls_sender (const struct iospec io, char *in, const int len, const int complete);
+
+int (*reciever) (const struct iospec io, char *in, const int max) = tls_reciever;
+int (*sender) (const struct iospec io, char *in, const int len, const int complete) = tls_sender;
+
+// bm process_request
+struct request_data process_request (const buffer inb)
+{
+struct request_data request;
+memset (&request, 0, sizeof(request));
+request.method = inb.p[0];
+
+int start = 0;
+if (request.method == 'G')
+    start = 4;
+
+if (request.method == 'P')
+    start = 5;
+
+printf ("!!!!%s!!!!\n!!!!", inb.p);
+
+
+return request;
+} // process request
+
+int sb_reciever (const struct iospec io, char *in, const int max)
+{
+static int count = 1;
+
+char path [string_sz];
+
+sprintf (path, "sandbox/%s/%s-%d.txt", io.sbname, io.sbname, count);
+printf ("sanbox: %s\n", path);
+
+int localfd = open (path, O_RDONLY);
+if (localfd > 0)
+{
+
+int len = read (localfd, in, max);    
+++count;
+
+return len;
+    
+}else{
+printf ("end of sequence\n");
+exit (0);
+} // if no file to open
+
+
+} // sb_reciever
+
+int sb_sender (const struct iospec io, char *in, const int len, const int complete)
+{
+return len;    
+} // sb_sender
+
 
 int main(int argc, char **argv)
 {
-int sock;
+int sock, clientfd;
 SSL_CTX *ctx;
+struct iospec io;
 
-ctx = create_context();
+for (int i = 1; i < argc; ++i)
+{
+if (!strcmp (argv[i], "-sb"))
+{
+strcpy (io.sbname, argv[i+1]);
+reciever = sb_reciever;
+sender = sb_sender;
+io.mode = sandbox;
+break;
+} // if sandbox
 
-configure_context(ctx);
 
-sock = create_socket(55555);
+//if (!strcmp (argv[i], "-notls"))
+//{
+    
+//} // if notls
+} //for args
+// bm main start
+
+if (io.mode == tls){
+    ctx = create_context(); configure_context(ctx);}
+
+if (io.mode != sandbox)
+    sock = create_socket(55555);
 
 // main server loop
 while(1) {
@@ -61,24 +159,29 @@ struct sockaddr_in addr;
 unsigned int len = sizeof(addr);
 SSL *ssl;
 
-int clientfd = accept(sock, (struct sockaddr*)&addr, &len);
- if (clientfd < 0) {
+if (io.mode != sandbox) 
+{
+clientfd = accept(sock, (struct sockaddr*)&addr, &len);
+if (clientfd < 0) {
 perror("Unable to accept");
 exit(EXIT_FAILURE);
 }
-  
-   
 sock_setnonblock (clientfd);
+
+    
+} // if not sanbox accept client 
+   
 //printf ("rt: %d\n", rt);
 
-
+if (io.mode == tls)
+{
 ssl = SSL_new(ctx);
  SSL_set_fd(ssl, clientfd);
 
 if (tls_nbaccept (ssl) ==-1)
     continue;
+} // if tls mode
 
-struct iospec io;
 io.fd = clientfd;
 io.ssl = ssl;
 
@@ -87,17 +190,25 @@ inbuff.max = string_sz;
 char inb [string_sz];
 inbuff.p = inb;
 
-inbuff.len = tls_reciever (io, inbuff.p, inbuff.max);
+inbuff.len = reciever (io, inbuff.p, inbuff.max);
 
-  printf ("%s\n", inbuff.p);
+struct request_data request = process_request (inbuff);
+request.io = &io;
+
+
+
+
+//const struct request_data test = request;
+
+
+  //printf ("%s\n", inbuff.p);
  
- tls_sender (io, hello, strlen (hello), 1);
+ sender (io, hello, strlen (hello), 1);
  
-SSL_shutdown(ssl);
-SSL_free(ssl);
+if (io.mode == tls) { SSL_shutdown(ssl); SSL_free(ssl);}
 
 
-close(clientfd);
+if (io.mode != sandbox) close(clientfd);
 } // server loop
 
 close(sock);
@@ -105,16 +216,16 @@ SSL_CTX_free(ctx);
 } // main
 // bm end_main
 
-int tls_sender (struct iospec io, char *in, const int max, int complete)
+int tls_sender (const struct iospec io, char *in, const int len, const int complete)
 {
 time_t basetime;
 time (&basetime);
  
-int len =-1;
-while (len < 0)
+int plen =-1;
+while (plen < 0)
 {
-len = SSL_write (io.ssl, in, max);
-if (len == -1 || len == 0)
+plen = SSL_write (io.ssl, in, len);
+if (plen == -1 || plen == 0)
 {
 nanosleep (&msdelay, &tsdump);
 time_t deadtime;
@@ -129,11 +240,11 @@ continue;
 
 } // while
 
-return len;
+return plen;
     
 } // tls_sender
 
-int tls_reciever (struct iospec io, char *in, const int max)
+int tls_reciever (const struct iospec io, char *in, const int max)
 {
 time_t basetime;
 time (&basetime);
