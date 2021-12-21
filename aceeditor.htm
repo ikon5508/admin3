@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+  <title>Editor</title>
+  <style type="text/css" media="screen">
+    body {
+        overflow: hidden;
+font-family: Arial, Helvetica, sans-serif;
+}
+.button {
+    padding-left:20px;
+  padding-right:20px;
+    font-size:30px;
+}
+
+
+#editor {
+        margin: 0;
+        position: fixed;
+        top: 0px;
+        bottom: 0px;
+        left: 0;
+        right: 0;
+}
+
+.options-btn {
+width: 80px;
+height: 80px;
+background: black;
+display: flex;
+border-radius: 50%;
+
+align-items: center;
+justify-content: center;
+text-decoration: none;
+border-radius: 50%;
+color: green;
+font-size: 40px;
+box-shadow: 2px 2px 5px rgba(0,0,0,0.25);
+position: fixed;
+right: 20px;
+bottom: 20%;
+transition: background 0.25s;
+z-index: 3;
+    
+}
+
+#overlay {
+position: fixed;
+display: none;
+width: 85%;
+height: 250px;
+right: 75px;
+top: auto;
+bottom: 150px;
+//background-color: rgba(0,0,0,0.5);
+background-color: green;
+
+z-index: 2;
+cursor: pointer;
+}
+
+#text {
+position: absolute;
+top: 50%;
+left: 50%;
+font-size: 50px;
+color: white;
+transform: translate(-50%,-50%);
+-ms-transform: translate(-50%,-50%);
+
+
+}
+  </style>
+</head>
+<body>
+
+<script>
+var copiedtext;
+var togglestate = 0;
+
+var str = new String (window.location);
+
+
+for (i=str.length -1; i > -1; --i) {
+if (str[i] == '/'){
+    
+break;
+}
+}
+let fname = str.slice (i + 1);
+window.document.title = (fname);
+
+for (i=str.length -1; i > -1; --i) {
+if (str[i] == '.'){
+    
+break;
+}
+}
+let ext = str.slice (i + 1);
+
+
+function on() {
+document.getElementById("overlay").style.display = "block";
+}
+
+
+function off() {
+document.getElementById("overlay").style.display = "none";
+togglestate = 0;
+
+}
+
+function toggleO () {
+    let obj = document.getElementById("overlay");
+
+if (togglestate == 0){
+    obj.style.display = "block";
+    togglestate = 1;
+}else if (togglestate == 1) {
+    obj.style.display = "none";
+    togglestate = 0;
+}
+}
+
+function save ()
+{
+//window.alert ("test function");
+
+let a = editor.getValue(); // or session.getValue
+ 
+form = document.createElement('form');
+form.setAttribute('method', 'POST');
+form.setAttribute('enctype', 'multipart/form-data');
+form.setAttribute('action', window.location);
+
+myvar = document.createElement('input');
+myvar.setAttribute('name', 'editor');
+myvar.setAttribute('type', 'hidden');
+myvar.setAttribute('value', a);
+
+form.appendChild(myvar);
+document.body.appendChild(form);
+//form.submit();   
+
+//window.alert (a);
+
+fetch (window.location, {method: "POST", body: JSON.stringify (a)})
+.then(res => res.text()) 
+.then(res => window.alert(res))
+
+.catch(err => window.alertr(err));
+off ();
+} // function save
+
+function bookmark (evt)
+{
+//window.alert (evt.target.value);
+//let path = "ace/mode/" + evt.target.value;
+  // editor.session.setMode(path);
+editor.gotoLine (evt.target.value);
+off ();
+
+}
+function theme (evt) {
+//window.alert (evt.target.value);
+
+let path = "ace/theme/" + evt.target.value;
+editor.setTheme(path);
+
+}
+
+function test () {
+  // window.alert (window.location)
+
+//document.getElementById ("booksdiv").innerHTML = ("<a href=https://www.google.com>google</a>");
+    
+    var ln = prompt ("what line?");
+    editor.gotoLine (ln);
+    off ();
+    
+}
+
+function cut () {
+copiedtext = editor.getCopyText ();
+editor.insert ("");
+}
+
+function copy () {
+    copiedtext = editor.getCopyText ();
+    //editor.execCommand ("copy");
+  //  navigator.clipboard.writeText (copiedtext);
+}
+
+function paste () {
+//    editor.execCommand ("paste");
+//navigator.clipboard.readText ();
+    
+    editor.insert (copiedtext);
+    
+}
+function fntsz (evt) {
+ //   window.alert (evt.target.value);
+   let ssz = evt.target.value + "px"; 
+    document.getElementById('editor').style.fontSize=(ssz);
+}
+
+function ro () {
+var ab = document.getElementById ("cb");
+    
+if (ab.checked == true)
+editor.setReadOnly (true);
+        
+if (ab.checked == false)
+editor.setReadOnly (false);
+  
+}
+
+</script>
+<div id="overlay">
+<div id="text">
+<select class="button" onchange="theme(event)">
+<option>terminal</option>  
+<option>monokai</option>  
+<option>chaos</option> 
+<option>tomorrow_night_bright</option>
+<option>vibrant_ink</option>     
+<option>twilight</option>
+<option>tomorrow_night_blue</option>
+<option>tomorrow_night</option>
+<option>solarized_dark</option>
+<option>pastel_on_dark</option>
+<option>one_dark</option>
+<option>nord_dark</option>
+<option>mono_industrial</option>
+<option>kr_theme</option>
+<option>gob</option>
+<option>cobalt</option>
+<option>dracula</option>
+<option>clouds_midnight</option>
+<option>ambiance</option>
+</select>
+<select class="button" onchange="fntsz(event)">
+    <option>12</option>
+    <option>14</option>
+    <option>16</option>
+    <option>18</option>
+    <option>20</option>
+    <option>22</option>
+    <option>24</option>
+    <option>26</option>
+    <option>28</option>
+    <option>32</option>
+    <option>34</option>
+   
+    
+</select>
+
+<input type="button" class="button" value="save" onclick="save()">
+<input type="button" class="button" value="Jump" onclick="test()">
+
+<div id="booksdiv">
+<!--bookmarks-->
+
+
+<!--select class="button" onchange="bookmark(event)">
+  <option value="300">None</option>  
+  <option value="800">proc request 800</option>
+    
+</select-->
+</div>
+
+
+<input type="button" class="button" value="cut" onclick="cut()">
+<input type="button" class="button" value="copy" onclick="copy()">
+<input type="button" class="button" value="paste" onclick="paste()">
+<input type="checkbox" id="cb" onclick="ro()">
+
+</div>
+</div>
+
+
+
+
+
+<div id="editor">DELIMETER</div>
+
+
+
+
+<script src="/file/ace-builds/src-noconflict/ace.js" type="text/javascript" charset="utf-8"></script>
+<script>
+    var editor = ace.edit("editor");
+    editor.setTheme("ace/theme/terminal");
+    
+    if (ext == "c" || ext == "h")
+    editor.session.setMode("ace/mode/c_cpp");
+    
+    if (ext == "htm")
+    editor.session.setMode("ace/mode/html");
+    
+    document.getElementById('editor').style.fontSize=("18px");
+    editor.session.setUseWrapMode(true);
+    
+</script>
+<a href="javascript: toggleO ()" class="options-btn">O</a>
+
+</body>
+</html>
