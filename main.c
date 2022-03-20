@@ -1,65 +1,5 @@
 #include "main.h"
 #include "common.h"
-
-/*
-void kill (const char *msg) {
-printf ("%s\n", msg);
-exit (0);
-    
-}
-*/
-int pipe_read (const int connfd, char *buffer, const int size)
-{ // bm pipe_read
-time_t basetime;
-time (&basetime);
-
-int len = -1;
-while (len < 0)
-{
-len = read (connfd, buffer, size);
-if (len == -1)
-{
-usleep (udelay);
-time_t deadtime;
-time (&deadtime);
-
-deadtime -= basetime;
-if (deadtime >= timeout)
-	{return -1;}
-
-} // if -1
-} // while
-
-return len;
-} // pipe_read
-
-int pipe_write (const int connfd, const char *buffer, int size)
-{ // bm pipe_write
-if (size == 0)
-    size = strlen (buffer);
-time_t basetime;
-time (&basetime);
-
-int len = -1;
-while (len < 0)
-{
-len = write (connfd, buffer, size);
-if (len == -1)
-{
-usleep (udelay);
-time_t deadtime;
-time (&deadtime);
-deadtime -= basetime;
-
-if (deadtime >= timeout)
-	{return -1;}
-} // if -1
-
-} // while
-return len;
-} // pipe_write_old
-
-
 SSL_CTX *create_context()
 {// bm create context
     const SSL_METHOD *method;
@@ -91,25 +31,36 @@ void configure_context(SSL_CTX *ctx)
     }
 }
 
-int send_txt (const ipc_t *io, const char *txt)
+int send_txt (session_t *session, const char *txt)
 { // bm send txt
 int len = strlen (txt);
 
-char outbuffer [smbuff];
-struct buffer_data outbuff;
-outbuff.p = outbuffer;
-outbuff.len = 0;
-outbuff.max = smbuff;
+//printf ("sending: %s\n", txt);
 
-outbuff.len = sprintf (outbuff.p, "%s%s%s%s%d\n\n%.*s", hthead, conttxt, connclose, contlen, len, len, txt);
+int total_len = (len + strlen(hthead) + strlen(conttxt) + strlen(connclose) + strlen (contlen) +3);
 
-io->writer (io->io, outbuff.p, outbuff.len);
+
+session->out.p = (char *) malloc (total_len);
+if (session->out.p == NULL) killme ("no malloc");
+
+session->total = total_len;
+session->out.len = total_len;
+session->procint = 1;
+
+sprintf (session->out.p, "%s%s%s%s%d\n\n%.*s", hthead, conttxt, connclose, contlen, len, len, txt);
+
+printf ("session p from sendtxt\n%s\n", session->out.p);
+
+return 1;
+
+
+//io->writer (io->io, outbuff.p, outbuff.len);
 
 //sock_writeold (fd, outbuff.p, outbuff.len);
 return 1;
 } // send_txt
 
-void softclose (const int fd, buffer *inbuff)
+void softclose (const int fd, buffer_t *inbuff)
 { // bm softclose
 shutdown (fd,  SHUT_WR);
 
@@ -131,11 +82,19 @@ printf ("Connection closed by client\n");
 close(fd);
 } // softclose
 
-struct request_data process_request (const buffer inbuff) {
+int process_request (session_t *session) {
 // bm process request
-struct request_data request; 
-memset (&request, 0, sizeof (request)); 
+buffer_t inbuff;
+char in[string_sz];
+inbuff.p = in;
+inbuff.max = string_sz;
 
+inbuff.len = session->reader (session->io, inbuff.p, inbuff.max);
+
+printf ("request\n%.*s\n", inbuff.len, inbuff.p);
+
+
+/*
 request.method = inbuff.p[0];
 char *p1 = (char *) memchr (inbuff.p, 32, inbuff.len);
 int d1 = p1 - inbuff.p;
@@ -148,8 +107,11 @@ memcpy (request.uri, inbuff.p + d1, len);
 request.uri[len+1] = 0;
 
 return request;
+*/
+return 1;
 } // process new request
 
+/*
 void *thread_function (void * arg)
 { // bm thread F
 const struct thread_data tdata = *(struct thread_data *) arg;
@@ -157,14 +119,14 @@ struct ipc_table *ipc = tdata.ipc;
 
 //create poll
 const int tpollmax = 2;
-struct pollfd evtable [tpollmax];
-memset (evtable, 0, sizeof (struct pollfd) * 2);
+struct pollfd evtable [tpollmax], evback [tpollmax];
+memset (evback, 0, sizeof (struct pollfd) * tpollmax);
 
 int client_wait = 0;
 
 // add tdata.pipes[0] to poll
-evtable[0].fd = tdata.pipes[0];
-evtable[0].events = POLLIN;
+evback[0].fd = tdata.pipes[0];
+evback[0].events = POLLIN;
 
 //thread loop
 while (1) {
@@ -174,6 +136,8 @@ inbuff.p = inb;
 inbuff.max = dstring_sz;
 
 //poll
+memcpy (evtable, evback, sizeof(evback));
+
 int nevents = poll(evtable, tpollmax, -1);
 if (nevents == 0) { 
 // delete from poll / epoll
@@ -186,105 +150,125 @@ continue;
 if (evtable[0].fd == tdata.pipes[0] && evtable[0].revents & POLLIN){
 inbuff.len = pipe_read (tdata.pipes[0], inbuff.p, inbuff.max);
 
-if (!strcmp (inbuff.p, "new")) {
-printf ("thread recv new conn\n");
+if (!strncmp (inbuff.p, "new", inbuff.len)) {
+printf ("%d thread recv new conn\n", ipc->threadid);
 evtable[1].fd = ipc->fd;
 client_wait = 1;
-} // if new connection
+evback[1].fd = ipc->fd;
+evback[1].events = POLLIN;
+continue;
 
+} // if new connection
+continue;
 }
 
 //  client loop, process until TO
-while (1) { // thread client loop
+//while (1) { // thread client loop
 inbuff.len = ipc->reader (ipc->io, inbuff.p, inbuff.max);
-if (inbuff.len == -1) {
-ipc->busy = false;
-close (ipc->io.fd);
-break;
-}// if client timeout (READ LOOP)
-//printf ("%s\n", inbuff.p);
+//if (inbuff.len == -1) {
+//ipc->busy = false;
+//close (ipc->io.fd);
+//break;
+//}// if client timeout (READ LOOP)
+printf ("inbuff: %s\n", inbuff.p);
 
 struct request_data request = process_request (inbuff);
 trim (request.uri);
 
-//int get_perm (inbuff, reguest);
-/*
-if () {
- 
- 
- serv resource
- 
-    
-}else {
-
-send login 
-    
-}
-
-
-*/
 //printf ("%s\n", inbuff.p);
 
 //printf ("%s\n", request.uri);
+//struct request_data request;
+//strcpy (request.uri, "/index.html");
 
 send_txt (ipc, request.uri);
 printf ("%s\n", request.uri);
-
-exit (0);
-} // handle client loop until TO
+evback[1].fd = 0;
+evback[1].events = 0;
+ipc->busy = false;
+//exit (0);
+//} // handle client loop until TO
  
 
 } // thread loop
 
 return NULL;  
 } // thread_function
+*/
+
 
 int main (int argc, char **argv)
 {
 // bm main top
-const int tcount = 5;
-const int maxpoll = 20;
 
 SSL_CTX *ctx;
 ctx = create_context();
 configure_context(ctx);
 
-//load_settings ("config/config.txt");
+sigset_t set; 
 
-// iterate argv too!
+sigemptyset(&set);
+sigaddset(&set, SIGPIPE);
+if (pthread_sigmask(SIG_BLOCK, &set, NULL)  != 0)
+ killme("pthread_sigmask");
+
+if (argc == 2) {
+if (!strcmp (argv[1], "-f")) {
+load_settings (argv[2]); 
+} // if -f
+}else{ // if argc =2
+
+load_settings ("config/server.txt");   
+ // if config different
+} // load config
+
+total_users = 0;
+
+/*
+printf ("break\n\n");
+printf ("use main: %d\n", settings.use_main);
+printf ("thread count: %d\n", settings.thread_count);
+printf ("HTTP mode: %d\n", settings.http_mode);
+printf ("users per thread: %d\n", settings.users_per_thread);
+printf ("editor: %s\n", settings.editor);
+printf ("base_dir: %s\n", settings.base_dir);
+printf ("internal: %s\n", settings.internal);
+exit (0);
+*/
 
 // create poll
-struct pollfd evtable [maxpoll];
-memset (evtable, 0, sizeof (struct pollfd) * maxpoll);
+struct pollfd evtable[settings.users_per_thread], pollreg[settings.users_per_thread];
+memset (pollreg, 0, sizeof (struct pollfd) * settings.users_per_thread);
 
 //open server sockets
 int httpfd, httpsfd;
 httpfd = prepsocket (settings.http_port);
-if (httpfd ==-1) kill ("listen error");
-printf ("waiting on port: %d\n", settings.http_port);
+if (httpfd ==-1) killme ("listen error");
+printf ("HTTP waiting on port: %d\n", settings.http_port);
 // add httpfd to poll
-evtable[0].events = POLLIN;
-evtable[0].fd = httpfd;
+pollreg[0].events = POLLIN;
+pollreg[0].fd = httpfd;
 
 httpsfd = prepsocket (settings.https_port);
-if (httpsfd == -1) kill ("sock error");
-printf ("waiting on port: %d\n", settings.https_port);
+if (httpsfd == -1) killme ("sock error");
+printf ("HTTPS waiting on port: %d\n", settings.https_port);
 // add httpsfd to poll
-evtable[1].events = POLLIN;
-evtable[1].fd = httpsfd;
+pollreg[1].events = POLLIN;
+pollreg[1].fd = httpsfd;
 
+/*
 // start threads
 pthread_t thread_pool [tcount];
 struct thread_data tdata [tcount];
 struct ipc_table *ipc = (ipc_t *) malloc (sizeof(ipc_t) * tcount);
-if (ipc == NULL) kill ("malloc error");
+if (ipc == NULL) killme ("malloc error");
 memset (ipc, 0, sizeof(struct ipc_table) * tcount);
 
 for (int i = 0; i < tcount; ++i)
 {
 if (pipe2 (tdata[i].pipes, O_NONBLOCK) != 0)
 //if (pipe (pipes[i].pipes) != 0)
-kill ("pipe error");
+killme ("pipe error");
 
 tdata[i].threadid = i;
 ipc[i].threadid = i;
@@ -293,19 +277,26 @@ tdata[i].ipc = &ipc[i];
 
 pthread_create(&thread_pool[i], NULL, thread_function, (void *) &tdata[i]);
 } // for init threads
+*/
+
+// init sessions in stack, may move to heap #if linux later
+session_t sessions [settings.users_per_thread];
+memset (sessions, 0, sizeof(sessions));
 
 while (1) {// bm server loop top
 struct sockaddr_in address;
 socklen_t addrlen = sizeof(address);
 
-int nevents = poll(evtable, maxpoll, -1);
-if (nevents ==-1) kill ("poll wait err");
+memcpy (evtable, pollreg, sizeof (pollreg));
+
+int nevents = poll(evtable, settings.users_per_thread, -1);
+if (nevents ==-1) killme ("poll wait err");
 // poll does not change struct order
 
-for (int i = 0; i < maxpoll; ++i) {
-if (evtable[i].fd == httpfd && evtable[i].revents & POLLIN) {
+
+if (evtable[0].fd == httpfd && evtable[0].revents & POLLIN) {
 // accept new http
-printf ("new http connection (ev#: %d)\n", i);
+//printf ("new http connection (ev#: %d)\n", i);
 int connfd = accept(httpfd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
 if (connfd ==-1)  {printf ("new conn failed!!\n"); continue;}
 sock_setnonblock (connfd);
@@ -314,69 +305,134 @@ char str[INET_ADDRSTRLEN];
 inet_ntop(address.sin_family, &address.sin_addr, str, INET_ADDRSTRLEN);
 printf("new http connection from %s:%d\n", str, ntohs(address.sin_port));
 
-// get available thread, pass connfd and pipe update signal
-int tid = get_thread (ipc, tcount);
-if (tid ==-1)
-kill ("all threads taken!");
+int sessionid = addconn (sessions, pollreg, connfd, http);
+printf ("added sessionid: %d connfd: %d\n", sessionid, connfd);
 
-//printf ("putting connfd: %d into ipc %d\n", connfd, tid);
-ipc[tid].io.fd = connfd;
-ipc[tid].reader = sock_read;
-ipc[tid].writer = sock_writeold;
-ipc[tid].fd = connfd;
-ipc[tid].busy = true;
-ipc[tid].enc = false;
-pipe_write (tdata[tid].pipes[1], "new", 3);
 
-} else if (evtable[i].fd == httpsfd && evtable[i].revents & POLLIN) {
+} /*else if (evtable[1].fd == httpsfd && evtable[1].revents & POLLIN) {
 // accept new https
-printf ("new https connection (ev#: %d)\n", i);
+//printf ("new https connection (ev#: %d)\n", i);
 int connfd = accept(httpsfd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
 if (connfd ==-1)  {printf ("new conn failed!!\n"); continue;}
 sock_setnonblock (connfd);
 
 char str[INET_ADDRSTRLEN];
 inet_ntop(address.sin_family, &address.sin_addr, str, INET_ADDRSTRLEN);
-printf("new https connection from %s:%d\n", str, ntohs(address.sin_port));
+printf("new https connection from %s.%d\n", str, ntohs(address.sin_port));
 
 SSL *ssl = SSL_new(ctx);
 SSL_set_fd(ssl, connfd);
 
 int rt = ssl_nbaccept (ssl);
-if (rt <= 0) {close (connfd); break;}
+if (rt <= 0) {close (connfd);}
+} // if https
+*/
 
+// loop through other poll events 
 
-//  update to ssl
-// get available thread, pass connfd and pipe update signal
-int tid = get_thread (ipc, tcount);
-if (tid ==-1)
-kill ("all threads taken!");
+for (int i = 2; i < settings.users_per_thread; ++i)
+{
+if (evtable[i].revents & POLLIN)
+{
+int sessionid = getsessionby_fd (sessions, evtable[i].fd);
+printf ("POLLIN got session id:%d\n", sessionid);
+process_request (&sessions[sessionid]);
+send_txt (&sessions[sessionid], "it worked");
+pollreg[sessionid].events = POLLOUT;
 
-//printf ("putting connfd: %d into ipc %d\n", connfd, tid);
-ipc[tid].io.ssl = ssl;
-ipc[tid].reader = ssl_nbread;
-ipc[tid].writer = ssl_writeold;
-ipc[tid].fd = connfd;
-ipc[tid].busy = true;
-ipc[tid].enc = true;
-pipe_write (tdata[tid].pipes[1], "new", 3);
+} // if POLLIN
 
+if (evtable[i].revents & POLLOUT)
+{
+int id = getsessionby_fd (sessions, evtable[i].fd);
+printf ("POLLOUT got session id:%d\n", id);
 
+sessions[id].writer (sessions[id].io, sessions[id].out.p, sessions[id].out.len);
+buffer_t b;
+char x[200];
+b.max = 200;
+softclose (sessions[id].sockfd, &b);
 
-
-//} else if (checkpipes (events[i].data.fd) != 0) {
-// process IPC dafa from thread  
+exit (0);
+// write POLLOUT    
     
-//} else {
-// other monitored socket
+} // if POLLOUT    
+    
+    
+} // for other poll event loop
+} // main server loop
+} // main
 
+
+
+int getsessionby_fd (const session_t *sessions, const int fd) 
+{ // bm get session by id
+ int i;
+    for (i = 2; i < settings.users_per_thread; ++i)
+    if (sessions[i].sockfd == fd)
+    break;
+    
+    if (i == settings.users_per_thread && sessions[i].sockfd == 0)
+    return -1;
+    
+    return i;
+    
+} // get session by id
+
+int addconn (session_t *bank, struct pollfd *pollreg, const int fd, const enum _protocol p)
+{ // bm add user
+int i;
+for (i = 2; i < settings.users_per_thread; ++i) 
+if (bank[i].use == false) 
+break;
+      
+if (i == settings.users_per_thread && bank[i].use == false)
+return -1;
+
+bank[i].use = true;
+bank[i].protocol = p;
+bank[i].sockfd = fd;
+bank[i].io.fd = fd; 
+time (&bank[i].stamp);
+
+if (p == http)  {
+bank[i].writer = sock_writer;
+bank[i].reader = sock_reader;
+}else if (p == https) {
+bank[i].writer = tls_writer;
+bank[i].reader = tls_reader;
 } // if
 
-} // epoll event loop
+pollreg[i].fd = fd;
+pollreg[i].events = POLLIN;
 
-} // main server loop
+++total_users;
 
-} // main
+return i;    
+} // add user
+
+/*
+struct _session {
+enum _status {idle, in, out} status;
+enum _protocol {http, https, ws, wss} protocol;
+int localfd;
+int sockfd;
+io_t io;
+int (*writer)(const io_t iop, const char *buffer, const int len);
+int (*reader)(const io_t iop, char *buffer, const int len);
+int (*cb)(const struct _session sess);
+page_t out;
+int thread_id;
+unsigned int permissions;
+int user_id;
+bool use;
+int procint;
+time_t stamp;
+struct _session *next;
+};
+typedef struct _session session_t;
+*/
+
 
 int ssl_nbaccept (SSL *ssl){
 // bm ssl_NBaccept
@@ -409,97 +465,71 @@ break;
 return rt;  
 }// ssl_nbaccept
 
-int get_thread (const struct ipc_table *ipc, const int tc)
-{// bm get thread
-for (int i = 0; i < tc; ++i)
-{
-if (ipc[i].busy == false)   
-{
+
+void load_settings (const char *fname) {
+// bm load_settings
+printf ("loading config file: %s\n", fname);
+
+int fd = open (fname, O_RDONLY);
+if (fd == -1) killme ("bad config file");
 
 
-
-return ipc[i].threadid;
-
-    
-}// if
-}// for
-
-  
-return -1;
-}
-
-/*
-struct main_settings {
-
-int HTTP_port;
-int HTTPS_port;
-
-int httpmode; // set to 1, redirect
-int fork_request;
-
-char editor [name_holder];
-char internal [name_holder];
-char base_dir [name_holder];
-}settings = {9999, 5555, 1, 0,
-"aceeditor.htm", ".", "."};
-*/
-
-/*
-void load_settings (const char *path)
-{
-
-int fd = open (path, O_RDONLY);
-if (fd < 0)
-kill ("settings file not found");
-
-int fsize = lseek (fd, 0, SEEK_END);
-
-lseek (fd, 0, SEEK_SET);
-
-
-char *data = malloc (fsize + 1);
-if (data == NULL) 
-kill ("cannot malloc load-settings\n");
-
-int rin = read (fd, data, fsize);
-if (rin != fsize)
-kill ("read error 40");
-
-data[fsize + 1] = 0;
-printf ("data\n%s\nparse\n", data);
-
-
-char *feed = data;
-//for (int i = 0; i != 3; i++)
-while (1)
-{
+char filed [lgbuff];
 char name [name_holder];
 char value [name_holder];
 
-char *rtn = parse_value (name, ':', value, feed);
+read (fd, filed, lgbuff);
+
+
+char *feed = filed;
+
+while (1)
+{
+
+char *rtn = parse_line (name, feed);
 if (rtn == NULL) break;
 
+
+//printf ("name: %s\n", name);
+
+split_value (':', value, name);
+
+trim (name);
+trim (value);
+
+//printf ("ls: %s / %s\n", name, value);
+
+
+if (!strcmp ("threads", name)){ settings.thread_count = atoi (value);
+
+    
+}else if (!strcmp ("http_port", name)) { settings.http_port = atoi (value);
+}else if (!strcmp ("https_port", name)) { settings.https_port = atoi (value);
+}else if (!strcmp ("editor", name)) { strcpy (settings.editor, value);
+}else if (!strcmp ("base_dir", name)) { strcpy (settings.base_dir, value);
+}else if (!strcmp ("internal", name)) { strcpy (settings.internal, value);
+}else if (!strcmp ("users_per_thread", name)) { settings.users_per_thread = atoi(value);
+}else if (!strcmp ("http_mode", name)) { settings.http_mode = atoi(value);
+
+}else if (!strcmp ("use_main", name)) { settings.use_main = atoi(value);
+
+}
+
+//port & URL
+
+
+//printf ("name- %s\n", name);
+
+
+//printf ("value- %s\n", value);
+
+ 
 feed = rtn;
+} // WHILE
+ 
+} // load settings
 
 
-char section = 0;
-
-if (!strcmp (name, "[ main ]"))
-{section = 1; continue;}
-
-
-    // to be completed
-    
-    
-
-
-} // loop iterant
-
-
-free (data);
-close (fd);
-}// load settings
-*/
 
 int prepsocket (const int PORT)
 {

@@ -1,5 +1,37 @@
+int tls_reader (const io_t io, char *buffer, const int len)
+{ // bm ssl_reader
+    return SSL_read (io.ssl, buffer, len);
+}// ssl_reader
 
-void kill (const char *msg) {
+int tls_writer (const io_t io, const char *buffer, const int len)
+{// bm ssl_writer
+    
+    return SSL_write (io.ssl, buffer, len);
+    
+}// ssl_writer
+
+int sock_reader (const io_t io, char *buffer, const int len)
+{ // bm http_reader
+
+return read (io.fd, buffer, len);
+
+}// http_reader
+
+int sock_writer (const io_t io, const char *buffer, const int len)
+{ // bm http_writer
+
+printf ("sockwriter called fd: [%d]\n%.*s\n", io.fd, len, buffer);
+
+int rtn = write (io.fd, buffer, len);
+    
+printf ("return from write: %d\n", rtn);
+return rtn;
+
+
+}// http_writer
+
+
+void killme (const char *msg) {
 printf ("%s\n", msg);
 exit (0);
 }
@@ -98,106 +130,6 @@ i = 0;
 } // switch
 } // for
 } // trim
-
-int sock_read (const io_t io, char *buffer, const int size)
-{ // bm sock_read
-time_t basetime;
-time (&basetime);
-
-int len = -1;
-while (len < 0)
-{
-len = read (io.fd, buffer, size);
-if (len == -1)
-{
-usleep (udelay);
-time_t deadtime;
-time (&deadtime);
-
-deadtime -= basetime;
-if (deadtime >= timeout)
-	{return -1;}
-
-} // if -1
-} // while
-
-return len;
-} // sock_read
-
-int sock_writeold (const io_t io, const char *buffer, const int size)
-{ // bm sock_writeold
-
-time_t basetime;
-time (&basetime);
-
-int len = -1;
-while (len < 0)
-{
-len = write (io.fd, buffer, size);
-if (len == -1)
-{
-usleep (udelay);
-time_t deadtime;
-time (&deadtime);
-deadtime -= basetime;
-
-if (deadtime >= timeout)
-	{return -1;}
-} // if -1
-
-} // while
-return len;
-} // sock_write_old
-
-int ssl_nbread (const io_t io, char *buffer, const int size)
-{ // bm ssl_NBread
-time_t basetime;
-time (&basetime);
-
-int len = -1;
-while (len < 0)
-{
-len = SSL_read (io.ssl, buffer, size);
-if (len == -1)
-{
-usleep (udelay);
-time_t deadtime;
-time (&deadtime);
-
-deadtime -= basetime;
-if (deadtime >= timeout)
-	{return -1;}
-
-} // if -1
-} // while
-
-return len;
-} // ssl_nbread
-
-int ssl_writeold (const io_t io, const char *buffer, const int size)
-{ // bm ssl_writeold
-time_t basetime;
-time (&basetime);
-
-int len = -1;
-while (len < 0)
-{
-len = SSL_write (io.ssl, buffer, size);
-if (len == -1)
-{
-usleep (udelay);
-time_t deadtime;
-time (&deadtime);
-deadtime -= basetime;
-
-if (deadtime >= timeout)
-	{return -1;}
-} // if -1
-
-} // while
-return len;
-} // ssl_write_old
-
 
 int sock_setnonblock (const int fd)
 {

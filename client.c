@@ -28,18 +28,18 @@
 
 #define udelay 100000
 
-
 union _io {
-    SSL *ssl;
-    int fd;
+SSL *ssl;
+int fd;
 }io;
 typedef union _io io_t;
 
-int (*writer)(io_t io, const char *buffer, const int len);
-int (*reader)(io_t io, char *buffer, const int len);
-
 #include "common.h"
 
+
+
+int (*writer)(io_t io, const char *buffer, const int len);
+int (*reader)(io_t io, char *buffer, const int len);
 
 struct _settings {
 int portno;
@@ -110,7 +110,7 @@ void load_settings (const char *fname) {
 // bm load_settings
 
 int fd = open (fname, O_RDONLY);
-if (fd == -1) kill ("bad config file");
+if (fd == -1) killme ("bad config file");
 char filed [lgbuff];
 char name [name_holder];
 char value [name_holder];
@@ -205,19 +205,19 @@ if (settings.enc) {
 ssl = SSL_new(ctx);
 SSL_set_fd(ssl, sockfd);
 
-writer = ssl_writeold;
-reader = ssl_nbread;
+writer = tls_writer;
+reader = tls_reader;
 io.ssl = ssl;
 int rt = SSL_connect(ssl);
 if (rt <= 0) {printf ("ssl connect error\n"); exit (0);}
 
 }else {
-  writer = sock_writeold;
-  reader = sock_read;
+  writer = sock_writer;
+  reader = sock_reader;
   io.fd = sockfd; 
 }
-if (fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFL, 0) | O_NONBLOCK) == -1)
-  { printf ("calling fcntl\n"); exit (0);}
+//if (fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFL, 0) | O_NONBLOCK) == -1)
+//  { printf ("calling fcntl\n"); exit (0);}
 
 
 
