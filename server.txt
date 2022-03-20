@@ -1,0 +1,10 @@
+threads: 5
+http_port: 9999
+https_port: 5555
+editor: aceeditor.htm
+base_dir: .
+internal: .
+users_per_thread: 200000
+http_mode: 2
+use_main: 1
+always include term line // parse line omits last line
