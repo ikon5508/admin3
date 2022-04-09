@@ -1,243 +1,238 @@
+#define _GNU_SOURCE
 
-
+// standard c library
 #include <stdio.h>
+// for file stat
+#include <sys/stat.h>
+// string functions
+#include <string.h>
+// for malloc
+#include <stdlib.h>
+// for files and file descriptors
+#include <fcntl.h>
+// for read / write
+#include <unistd.h>
+
+#include <stdbool.h>
+
+#include <time.h>
+
+// for sockets and such
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h> 
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
 //#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <time.h>
-#include <stdbool.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
 
-#define name_holder 256
-#define string_sz 1024
-#define dstring_sz 2048
+// for poll
+#include <poll.h>
 
-#define smbuff 10000
-#define lgbuff 100000
+// library I created with some useful functions
+#include "shared.h"
 
-#define timeout 3
-#define mstimeout 3000
+void load_settings (const char *);
 
-#define udelay 100000
+const char *default_settings_path = "../config/client.txt";
+struct main_settings {
+int kiss_port;
+int http_port;
+char host [name_holder];
+char uri [name_holder];
+}settings = {10000, 9999, 
+"localhost", "/index.htm"    
+};
 
-union _io {
-SSL *ssl;
-int fd;
-}io;
-typedef union _io io_t;
+int main (int argc, char **argv) 
+{ // bm main top
 
-#include "common.h"
+if (argc > 1) {
+char *p;
 
-
-
-int (*writer)(io_t io, const char *buffer, const int len);
-int (*reader)(io_t io, char *buffer, const int len);
-
-struct _settings {
-int portno;
-bool enc;
-char host [string_sz];
-char url [string_sz];
-}settings;
-
-
-
-
-
-
-void error(char *msg)
+p = strstr (argv[1], "-f");
+if (p != NULL)
 {
-    perror(msg);
-    exit(0);
-}
-
-SSL_CTX *create_context()
-{
-    const SSL_METHOD *method;
-    SSL_CTX *ctx;
-
-    method = TLS_client_method();
-
-    ctx = SSL_CTX_new(method);
-    if (!ctx) {
-        perror("Unable to create SSL context");
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    return ctx;
-}
-
-void configure_context(SSL_CTX *ctx)
-{
-    /* Set the key and cert */
-    if (SSL_CTX_use_certificate_file(ctx, "server.crt", SSL_FILETYPE_PEM) <= 0) {
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    if (SSL_CTX_use_PrivateKey_file(ctx, "server.key", SSL_FILETYPE_PEM) <= 0 ) {
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-}
-
-struct timespec timediff(struct timespec start, struct timespec end) 
-{
-    struct timespec temp;
-    if ((end.tv_nsec-start.tv_nsec)<0)
-{ 
-    temp.tv_sec = end.tv_sec-start.tv_sec-1;
-    temp.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec; 
-        
-} else { 
-temp.tv_sec = end.tv_sec-start.tv_sec;
-temp.tv_nsec = end.tv_nsec-start.tv_nsec;
-}
-return temp; 
-    
-}
-
-void load_settings (const char *fname) {
-// bm load_settings
-
-int fd = open (fname, O_RDONLY);
-if (fd == -1) killme ("bad config file");
-char filed [lgbuff];
-char name [name_holder];
-char value [name_holder];
-
-read (fd, filed, lgbuff);
-
-
-char *feed = filed;
-
-while (1)
-{
-
-char *rtn = parse_line (name, feed);
-if (rtn == NULL) break;
-
-
-//printf ("name: %s\n", name);
-
-split_value (':', value, name);
-
-trim (name);
-trim (value);
-
-if (!strcmp ("encrypt", name)) {
-  if (!strcmp ("true", value)) settings.enc = true;
-
-    
-}else if (!strcmp ("host", name)) { strcpy (settings.host, value);
-}else if (!strcmp ("port", name)) { settings.portno = atoi (value);
-}else if (!strcmp ("URL", name)) { strcpy (settings.url, value);
-}
-
-//port & URL
-
-
-//printf ("name- %s\n", name);
-
-
-//printf ("value- %s\n", value);
-
- 
-feed = rtn;
-} // WHILE
- 
- 
-  
-} // load settings
-
-int main(int argc, char *argv[])
-{
-if (argc != 2) {
-printf ("expected usage: %s /path/to/config/file", argv[0]);
-exit (0);
+char temp [name_holder];
+char temp2 [name_holder];
+strcpy (temp, argv[1]);
+if (!split_value (temp, '=', temp2)) killme ("unexpected cmd line arg");
+load_settings (temp2);
 }else{
-load_settings (argv[1]);
-} // if config
+load_settings (default_settings_path);
+}// if alt settings
 
-char buffer[smbuff];
 
-int sockfd, n;
+
+for (int i = 1; i < argc; ++i) {
+
+p = strstr (argv[i], "-uri");
+if (p != NULL)
+{
+char temp [name_holder];    
+strcpy (temp, argv[i]);
+if (!split_value (temp, '=', settings.uri)) killme ("unexpected cmd line arg");
+}// if uri
+
+p = strstr (argv[i], "-host");
+if (p != NULL)
+{
+char temp [name_holder];    
+strcpy (temp, argv[i]);
+if (!split_value (temp, '=', settings.host)) killme ("unexpected cmd line arg");
+}// if uri
+
+
+} // for
+
+}else{
+load_settings (default_settings_path);
+} // if args
+
+const int buffer_size = 10000;
+
+char buffer[buffer_size];
+
+int sockfd, portno, n;
 
 struct sockaddr_in serv_addr;
 struct hostent *server;
-SSL_CTX *ctx;
 
-ctx = create_context();
-
-configure_context(ctx);
-
-SSL *ssl;
-
+portno = settings.http_port;
 sockfd = socket(AF_INET, SOCK_STREAM, 0);
-if (sockfd < 0) error("ERROR opening socket");
+    if (sockfd < 0) 
+        killme("ERROR opening socket");
 
 server = gethostbyname(settings.host); // get hostbyname
-    if (server == NULL) error ("ERROR, no such host\n");
+if (server == NULL) killme ("error resolving host");
 
 bzero((char *) &serv_addr, sizeof(serv_addr));
 serv_addr.sin_family = AF_INET;
+
 bcopy((char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr, server->h_length);
-
-serv_addr.sin_port = htons(settings.portno);
-
-struct timespec start, end, diff;
-
-clock_gettime (CLOCK_MONOTONIC, &start);
+serv_addr.sin_port = htons(portno);
 
 if (connect(sockfd,(struct sockaddr *)&serv_addr,sizeof(serv_addr)) < 0) 
-        error("ERROR connecting");
+    killme("ERROR connecting");
 
-if (settings.enc) {
-ssl = SSL_new(ctx);
-SSL_set_fd(ssl, sockfd);
+sprintf(buffer, "GET %s HTTP/1.1 OK\n", settings.uri);
 
-writer = tls_writer;
-reader = tls_reader;
-io.ssl = ssl;
-int rt = SSL_connect(ssl);
-if (rt <= 0) {printf ("ssl connect error\n"); exit (0);}
+n = write(sockfd,buffer,strlen(buffer));
+if (n < 0) 
+     killme("ERROR writing to socket");
 
-}else {
-  writer = sock_writer;
-  reader = sock_reader;
-  io.fd = sockfd; 
+bzero(buffer,buffer_size);
+
+if (fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFL, 0) | O_NONBLOCK) == -1)
+    killme ("error making nonblock");
+/*
+n = read (sockfd, buffer, buffer_size);
+printf ("%.*s\n", n, buffer);
+n = read (sockfd, buffer, buffer_size);
+printf ("%.*s\n", n, buffer);
+*/
+
+struct pollfd evtable;
+evtable.fd = sockfd;
+evtable.events = POLLIN;
+
+char full_path [name_holder];
+
+sprintf (full_path, "./dn%s", settings.uri);
+printf ("full path: [%s]\n", full_path);
+int localfd = open (full_path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+if (localfd == -1) killme ("error opening full_path");
+
+unsigned long total = 0;
+unsigned long progress = 0;
+//for (int i = 0; i < 8; ++i)
+while (1)
+{
+int nevents = poll (&evtable, 1, 3000);
+if (nevents == 0) {printf ("server timeout\n"); break;}
+n = read (sockfd, buffer, buffer_size);
+if (n == 0) {printf ("EOF\n"); break;}
+if (n == -1) {printf ("read -1\n"); break;}
+
+
+if (!total) {
+char *p = (char *) memmem (buffer, n, "ength:", 6);
+if (p == NULL) killme ("error locating length");
+int d1 = p - buffer;
+char *end = (char *) memchr (buffer + d1, 10, n - d1);
+if (end == NULL) killme ("error locating end");
+int d2 = end - buffer;
+
+int len = d2 - d1;
+
+char str_sz [name_holder];
+memcpy (str_sz, buffer + d1 + 7, len - 7);
+str_sz [len] = 0;
+total = atol (str_sz);
+continue;
+
+} // if total not set yet
+
+write (localfd, buffer, n);
+
+progress += n;
+if (progress == total) {
+printf ("total recieved\n");
+exit (0);
 }
-//if (fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFL, 0) | O_NONBLOCK) == -1)
-//  { printf ("calling fcntl\n"); exit (0);}
+
+//printf ("#%d\n%.*s\n", i, n, buffer);
+
+evtable.revents = 0;    
+} // for
+close (localfd);
+} // main bottom
+
+void load_settings (const char *path)
+{ // bm load settings
+struct stat finfo;
+
+printf ("loading settings from: %s\n", path);
+
+if (stat (path, &finfo) != 0) {printf ("bad settings file, using defaults\n"); return ;}
+
+char *buffer = (char *) malloc (finfo.st_size +1);
+if (buffer == NULL) killme ("error in malloc, settings");
+
+int fd = open (path, O_RDONLY);
+if (fd < 0) killme ("error opening settings file");
+
+int readin = read (fd, buffer, finfo.st_size);
+if (readin != finfo.st_size) killme ("error reading settings file");
+
+buffer[readin + 1] = 0;
+
+//printf ("%s\n", buffer);
+
+char *feed = buffer;
+
+while (feed != NULL) 
+{
+char line [name_holder];
+    feed = parse_line (line, feed);
+    //printf ("ln: %s\n", line);
+    
+char value[name_holder];
+
+split_value (line, ':', value);
+//printf ("ln: %s - value: %s\n", line, value);
+
+trim (line);
+trim (value);
+
+if (!strcmp(line, "kiss_port")) { settings.kiss_port = atoi (value);
+}else if (!strcmp(line, "kiss_port")) {settings.http_port = atoi (value); 
+}else if (!strcmp(line, "host")) {strcpy (settings.host, value); 
+}else if (!strcmp(line, "uri")) {strcpy (settings.uri, value); 
+
+} // if
+
+    
+} // while
 
 
-
-sprintf(buffer, "GET /index.htm HTTP/1.1 OK\n");
-
-int rtn = writer (io, buffer, strlen(buffer));
-
-bzero(buffer,smbuff);
-printf ("%d writen\n", rtn);
-
-rtn = reader (io, buffer, smbuff);
-
-
-printf ("%s\n%d recieved", buffer, rtn);
-
-clock_gettime (CLOCK_MONOTONIC, &end);
-
-diff = timediff (start, end);
-int millsec = diff.tv_nsec / 1000000;
-printf ("took %ld:%d seconds \n", diff.tv_sec, millsec);
-
-
-}
+free (buffer);
+} // end load settings
