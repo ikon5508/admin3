@@ -75,10 +75,10 @@ int nevents = que_wait (&que);
 //node_t *nxt = que.top;
 while (que.current != NULL)
 {
-//que.current = nxt;
-//printf ("node iteration ready:fd: %d:%d\n", nxt->ready, nxt->connfd);
 if (que.current->ready == true)
 {
+
+
 if (que.current->connfd == kiss_fd || que.current->connfd == http_fd)
 {
 int connfd = accept(que.current->connfd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
@@ -95,18 +95,7 @@ que.current->ready = false;
 continue;
 } // if server fd
 
-//printf ("connfd: %d ready\n", que.current->connfd);  
-
-
-/*
-#define ready_out 1
-#define head_use 2
-#define head_done 3
-#define body_use 4
-#define body_done 5
-#define sndfile 6
-#define sfcomplete 7
-*/
+printf ("node id: %d\n", que.current->node_id);
 
 if (que.current->state & ready_out) {
     process_out (&que);
@@ -114,11 +103,22 @@ if (que.current->state & ready_out) {
 }
 
 if (!que.current->state) {
-    if (que.current->protocol == kiss) 
+if (que.current->protocol == kiss) {
     kiss_process_new (&que);
-}// if / else regular connection handling
 
-} // if ready
+    
+} else if (que.current->protocol == http) {
+    http_process_new (&que);
+        
+    
+    
+}// if kiss / http ready for reading
+} // if connection idle
+
+
+}else{ // if ready
+  
+} // if not ready
 
 que.current = que.current->next;    
 }// node loop
@@ -158,12 +158,11 @@ que->current->body_len = body_len;
 que->current->body_progress = 0;
 } // if addjustment needed
 
-
-
-
-int wrtn = write (que->current->connfd, que->current->body + body_progress, body_len - body_progress);
-
+int wrtn = 0;
+do {
+wrtn = write (que->current->connfd, que->current->body + body_progress, body_len - body_progress);
 printf ("%d written\n", wrtn);
+}while (wrtn != -1);
 
 body_progress += wrtn;
 if (body_progress == body_len && que->current->progress == que->current->total) {
@@ -184,8 +183,110 @@ que->current->body_progress = body_progress;
 
 
 
+
+
+
+int parse_http_request (struct kiss_request_data *req, const buffer_t inbuff)
+{ // bm parse http request
+memset (req, 0, sizeof (struct kiss_request_data));
+
+req->method = inbuff.p[0];
+
+char *p1 = (char *) memchr (inbuff.p, 32, inbuff.len);
+if (p1 == NULL) return 0; //killme ("process_request p1 error");
+int d1 = p1 - inbuff.p + 1;
+
+char *p2 = (char *) memchr (inbuff.p + d1, 32, inbuff.len - d1);
+if (p2 == NULL) return 0;//killme ("process_request p2 error");
+int d2 = p2 - inbuff.p;
+memcpy (req->uri, inbuff.p + d1, d2 - d1);
+int len = d2 - d1;
+req->uri [d2] = 0;
+
+p1 = strrchr (req->uri, (int) '.');
+if (p1 == NULL) {return 0;}
+d1 = p1 - req->uri;
+memcpy (req->ext, req->uri + d1, len - d1);
+len -= d1;
+req->ext[len] = 0;
+
+//if (que->current->protocol == kiss)
+//{
+    strcpy (req->path, req->uri);
+    sprintf (req->full_path, "%s%s", settings.base_path, req->uri);
+    
+//}
+
+//p1 = (char *) strstr (rtn.uri, edit_mode)
+
+
+return 1;
+} // parse http request
+
+void http_process_new (queue_t *que)
+{ // bm process new http
+buffer_t inbuff;
+char inb[smbuff_sz];
+inbuff.p = inb;
+inbuff.max = smbuff_sz;
+
+inbuff.len = read (que->current->connfd, inbuff.p, inbuff.max);
+if (inbuff.len == 0) {printf ("read null\n"); return;}
+if (inbuff.len == -1) {printf ("read -1\n"); return;}
+
+
+inbuff.p[inbuff.len] = 0;
+
+struct kiss_request_data request;
+if (!parse_http_request (&request, inbuff)) return;
+
+//printf ("request: [%s]\nURI [%s]\n", inbuff.p, request.uri);
+printf ("URI [%s]\n", request.uri);
+
+if (request.method == 'G')
+{
+printf ("preparing kiss get_file\n");
+struct stat finfo;
+if (stat (request.full_path, &finfo) != 0)
+{printf ("bad filename\n"); send_txt (que, "bad file name\n"); return;}
+
+int localfd = open (request.full_path, O_RDONLY);
+if (localfd == -1) {printf ("error opening\n"); send_txt (que, "error opening\n"); return;}
+
+generate_head (que->current, request.ext, finfo.st_size);
+
+int malloc_sz = (finfo.st_size > settings.max_malloc)? settings.max_malloc: finfo.st_size;
+
+que->current->localfd = localfd;
+que->current->total = finfo.st_size;
+
+que->current->body_len = malloc_sz;
+que->current->body = (char *) malloc (malloc_sz);
+if (que->current->body == NULL) killme ("error malloc m:230");
+
+int readin = read (localfd, que->current->body, malloc_sz);
+if (readin != malloc_sz) killme ("read err");
+
+que->current->progress = malloc_sz;
+printf ("file prepared, malloc_sz %d total %ld\n", malloc_sz, finfo.st_size);
+
+que->current->state = 1;
+node_change (que, que->current, QUE_W);
+return;
+} // if http GET
+// check_permissions (request);
+} // process new
+
+
+
+
+
+
+
+
+
 int parse_kiss_request (struct kiss_request_data *req, const buffer_t inbuff)
-{ // bm parse_request
+{ // bm parse kiss request
 memset (req, 0, sizeof (struct kiss_request_data));
 
 req->method = inbuff.p[0];
@@ -243,7 +344,7 @@ printf ("URI [%s]\n", request.uri);
 
 if (request.method == 'G')
 {
-printf ("preparing kiss get_file\n");
+//printf ("preparing kiss get_file\n");
 struct stat finfo;
 if (stat (request.full_path, &finfo) != 0)
 {printf ("bad filename\n"); send_txt (que, "bad file name\n"); return;}

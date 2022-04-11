@@ -87,7 +87,7 @@ if (!split_value (temp, '=', settings.host)) killme ("unexpected cmd line arg");
 load_settings (default_settings_path);
 } // if args
 
-const int buffer_size = 10000;
+const int buffer_size = 200;
 
 char buffer[buffer_size];
 
@@ -144,8 +144,11 @@ if (localfd == -1) killme ("error opening full_path");
 unsigned long total = 0;
 unsigned long progress = 0;
 //for (int i = 0; i < 8; ++i)
+int loopint = 0;
 while (1)
 {
+++loopint;
+printf ("loopint: %d\n", loopint);
 int nevents = poll (&evtable, 1, 3000);
 if (nevents == 0) {printf ("server timeout\n"); break;}
 n = read (sockfd, buffer, buffer_size);
@@ -155,6 +158,7 @@ if (n == -1) {printf ("read -1\n"); break;}
 
 if (!total) {
 char *p = (char *) memmem (buffer, n, "ength:", 6);
+printf ("len: %d\n%.*s\n", n, n, buffer);
 if (p == NULL) killme ("error locating length");
 int d1 = p - buffer;
 char *end = (char *) memchr (buffer + d1, 10, n - d1);
@@ -176,13 +180,13 @@ write (localfd, buffer, n);
 progress += n;
 if (progress == total) {
 printf ("total recieved\n");
-exit (0);
+break;
 }
 
 //printf ("#%d\n%.*s\n", i, n, buffer);
 
 evtable.revents = 0;    
-} // for
+} // while
 close (localfd);
 } // main bottom
 
